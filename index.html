@@ -181,7 +181,18 @@
     try { r.start(); } catch (err) { log("聞き取りを始められません: " + err.message); busy = false; setState("idle", "待っています"); }
   };
   $("knob").addEventListener("click", listen);
-  $("knob").addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); listen(); } });
+  // 外部ボタン（Bluetooth のシャッターボタンの Android 側、プレゼン用リモコン、1キーのキーボード）
+  // どのキーでも話しかけられるようにし、届いたキーの名前を記録する
+  let keyCount = 0;
+  document.addEventListener("keydown", (e) => {
+    if (e.repeat) return;
+    keyCount++;
+    setCheck("key", "外部ボタン", true, `${e.key || "?"}（${keyCount}回）`);
+    log(`ボタン: key=${e.key} code=${e.code}`);
+    if (["Tab"].includes(e.key)) return;
+    e.preventDefault(); listen();
+  });
+  setCheck("key", "外部ボタン", null, "押してみてください");
 
   // ---- 読み上げだけ ----
   $("btnSpeak").addEventListener("click", async () => {
