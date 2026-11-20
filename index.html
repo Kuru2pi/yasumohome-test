@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>yasumohome 動作テスト</title>
+<style>
+  /* iPhone 8（iOS 16）で、聞き取り・読み上げ・窓の光が動くかを確かめるページ */
+  :root {
+    --bg: #fbfaf7; --fg: #23262d; --sub: #7b8190; --line: #e3e1da;
+    --yellow: #f4cf3e; --pink: #ff8a8c; --glass: #a8f0ee; --ok: #2f9e6a; --ng: #d0473b;
+    --font: "Hiragino Sans", "Hiragino Kaku Gothic ProN", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.6 var(--font);
+         padding: env(safe-area-inset-top, 0px) max(16px, env(safe-area-inset-right, 0px)) env(safe-area-inset-bottom, 0px) max(16px, env(safe-area-inset-left, 0px)); }
+  main { max-width: 520px; margin: 0 auto; padding-block: 20px 40px; display: grid; gap: 18px; }
+  .eyebrow { font-size: 11px; letter-spacing: .14em; color: var(--sub); text-transform: uppercase; }
+  h1 { margin: 2px 0 0; font-size: 22px; }
+  .knob { display: grid; place-items: center; aspect-ratio: 1; width: min(68vw, 280px); margin: 0 auto;
+          border-radius: 50%; border: 10px solid var(--yellow); background: var(--glass); color: var(--fg);
+          font: 700 18px/1.4 var(--font); text-align: center; cursor: pointer; transition: background .4s, transform .15s; user-select: none; -webkit-user-select: none; }
+  .knob:active { transform: scale(.97); }
+  .knob small { display: block; font-weight: 400; font-size: 12px; color: var(--sub); }
+  .heard { min-height: 3.2em; padding: 12px 14px; border-radius: 12px; background: #fff; border: 1px solid var(--line); }
+  .heard .label { font-size: 11px; color: var(--sub); }
+  .reply { color: #b4473f; }
+  .checks { display: grid; gap: 6px; padding: 0; margin: 0; list-style: none; }
+  .checks li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .checks b { font-weight: 600; }
+  .ok { color: var(--ok); } .ng { color: var(--ng); } .wait { color: var(--sub); }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; }
+  button { font: 600 14px var(--font); padding: 10px 14px; border-radius: 10px; border: 1px solid var(--line); background: #fff; color: var(--fg); }
+  button:focus-visible, .knob:focus-visible { outline: 3px solid var(--pink); outline-offset: 3px; }
+  textarea { width: 100%; min-height: 120px; font: 12px/1.5 ui-monospace, Menlo, monospace; border-radius: 10px; border: 1px solid var(--line); padding: 10px; }
+  /* 窓モード：画面ぜんぶが窓の光になる */
+  #windowMode { position: fixed; inset: 0; display: grid; place-items: center; background: #ffe7b8; transition: background .6s; z-index: 5; }
+  #windowMode p { color: rgba(0,0,0,.35); font-size: 13px; text-align: center; }
+  .breath { animation: breath 4s ease-in-out infinite; }
+  @keyframes breath { 50% { filter: brightness(.6); } }
+  .pulse { animation: pulse 0.9s ease-in-out infinite; }
+  @keyframes pulse { 50% { filter: brightness(.75); } }
+  @media (prefers-reduced-motion: reduce) { .breath, .pulse { animation: none; } }
+</style>
+</head>
+<body>
+<main>
+  <div>
+    <div class="eyebrow">yasumohome · iPhone test</div>
+    <h1>動作テスト</h1>
+  </div>
+
+  <div class="knob" id="knob" role="button" tabindex="0" aria-label="タップして話しかける">
+    <div>タップして話す<small id="knobState">まだ使っていません</small></div>
+  </div>
+
+  <div class="heard">
+    <div class="label">聞き取った言葉</div>
+    <div id="heard">—</div>
+    <div class="label" style="margin-top:8px">ヤスモの返事（決まった文）</div>
+    <div id="reply" class="reply">—</div>
+  </div>
+
+  <section>
+    <div class="eyebrow">CHECK</div>
+    <ul class="checks" id="checks"></ul>
+  </section>
+
+  <div class="row">
+    <button id="btnSpeak">読み上げだけ試す</button>
+    <button id="btnRec">3秒録音して再生</button>
+    <button id="btnWindow">窓モードにする</button>
+  </div>
+
+  <section>
+    <div class="eyebrow">RESULT</div>
+    <textarea id="log" readonly aria-label="結果"></textarea>
+    <div class="row"><button id="btnCopy">結果をコピー</button></div>
+  </section>
+</main>
+
+<div id="windowMode" hidden>
+  <p>窓モード<br>どこかをタップすると話しかけます<br>（3回すばやくタップで戻る）</p>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const logLines = [];
+  const log = (s) => { logLines.push(s); $("log").value = logLines.join("\n"); };
+  const checks = {};
+  const setCheck = (key, label, ok, note = "") => {
+    checks[key] = { label, ok, note };
+    $("checks").innerHTML = Object.values(checks).map(c =>
+      `<li><span>${c.label}</span><b class="${c.ok === null ? "wait" : c.ok ? "ok" : "ng"}">${c.ok === null ? "…" : c.ok ? "OK" : "NG"} ${c.note}</b></li>`).join("");
+  };
+
+  // ---- 基本の確認 ----
+  const iosMatch = navigator.userAgent.match(/OS (\d+)_(\d+)/);
+  log("端末: " + navigator.userAgent);
+  setCheck("ios", "iOS の版", !!iosMatch, iosMatch ? iosMatch[1] + "." + iosMatch[2] : "不明");
+  setCheck("secure", "https で開いている", window.isSecureContext);
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  setCheck("sr", "聞き取り（音声認識）", !!SR);
+  setCheck("tts", "読み上げ", "speechSynthesis" in window);
+  setCheck("mic", "マイク（録音）", !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
+  setCheck("rec", "録音して送る方式", typeof MediaRecorder !== "undefined");
+  setCheck("wake", "画面を消さない", "wakeLock" in navigator, "wakeLock" in navigator ? "" : "（アクセスガイドで代用）");
+
+  let jaVoice = null;
+  const loadVoices = () => {
+    const vs = speechSynthesis.getVoices().filter(v => /ja/i.test(v.lang));
+    if (vs.length) {
+      jaVoice = vs.find(v => /Kyoko|O-ren|Otoya/i.test(v.name)) || vs[0];
+      setCheck("voice", "日本語の声", true, jaVoice.name);
+    } else setCheck("voice", "日本語の声", null);
+  };
+  if ("speechSynthesis" in window) { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
+
+  // ---- 窓の光（状態ごとの色） ----
+  const LIGHT = { idle: ["#ffe7b8", "breath"], listen: ["#bff6f2", ""], think: ["#ffe27a", "pulse"], speak: ["#fff4dc", "pulse"] };
+  const setState = (st, text) => {
+    $("knobState").textContent = text;
+    $("knob").style.background = LIGHT[st][0];
+    const w = $("windowMode"); w.style.background = LIGHT[st][0];
+    w.classList.remove("breath", "pulse"); if (LIGHT[st][1]) w.classList.add(LIGHT[st][1]);
+  };
+  setState("idle", "待っています");
+
+  // ---- 決まった返事（AI はまだつながない） ----
+  const replyFor = (t) => {
+    if (/消えたい|死にたい|つらすぎ/.test(t)) return "話してくれてありがとう。ひとりで抱えなくていいよ。いま話せる人につながってほしいな。";
+    if (/疲れ|つかれ|しんど/.test(t)) return "おつかれさま。今日は少し早めに、目を閉じる時間をつくってもいいよ。";
+    if (/眠|ねむ/.test(t)) return "ねむいんだね。五分だけ、横になってみるのはどうかな。";
+    if (/ありがと/.test(t)) return "どういたしまして。またいつでも話しかけてね。";
+    return "そっか、教えてくれてありがとう。ひと息ついて、肩の力をぬいてみよう。";
+  };
+  const speak = (text) => new Promise((res) => {
+    if (!("speechSynthesis" in window)) return res(false);
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = "ja-JP"; u.rate = 0.95; u.pitch = 1.05; if (jaVoice) u.voice = jaVoice;
+    u.onend = () => res(true); u.onerror = (e) => { log("読み上げエラー: " + e.error); res(false); };
+    speechSynthesis.speak(u);
+  });
+
+  // ---- 聞き取り ----
+  let busy = false;
+  const listen = () => {
+    if (busy) return;
+    if (!SR) { log("この端末のブラウザでは聞き取りが使えません"); setCheck("srrun", "聞き取りの実行", false); return; }
+    busy = true;
+    const r = new SR(); r.lang = "ja-JP"; r.interimResults = true; r.continuous = false; r.maxAlternatives = 1;
+    let finalText = ""; const t0 = performance.now();
+    setState("listen", "聞いています…");
+    r.onresult = (e) => {
+      let s = ""; for (const res of e.results) s += res[0].transcript;
+      $("heard").textContent = s;
+      if (e.results[e.results.length - 1].isFinal) finalText = s;
+    };
+    r.onerror = (e) => { log("聞き取りエラー: " + e.error); setCheck("srrun", "聞き取りの実行", false, e.error); };
+    r.onend = async () => {
+      const text = finalText || $("heard").textContent;
+      const ms = Math.round(performance.now() - t0);
+      if (text && text !== "—") {
+        setCheck("srrun", "聞き取りの実行", true, ms + "ms");
+        log(`聞き取り: 「${text}」 (${ms}ms)`);
+        setState("think", "考えています…");
+        await new Promise(r => setTimeout(r, 700));
+        const rep = replyFor(text); $("reply").textContent = rep;
+        setState("speak", "話しています…");
+        const ok = await speak(rep);
+        setCheck("ttsrun", "読み上げの実行", ok);
+      } else {
+        log("聞き取り: 何も聞き取れませんでした");
+      }
+      setState("idle", "待っています"); busy = false;
+    };
+    try { r.start(); } catch (err) { log("聞き取りを始められません: " + err.message); busy = false; setState("idle", "待っています"); }
+  };
+  $("knob").addEventListener("click", listen);
+  $("knob").addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); listen(); } });
+
+  // ---- 読み上げだけ ----
+  $("btnSpeak").addEventListener("click", async () => {
+    setState("speak", "話しています…");
+    const ok = await speak("こんにちは。ヤスモだよ。きょうも、休んでもいいからね。");
+    setCheck("ttsrun", "読み上げの実行", ok); log("読み上げだけ: " + (ok ? "OK" : "NG"));
+    setState("idle", "待っています");
+  });
+
+  // ---- 3秒録音して再生（クラウドで文字にする方式の確認） ----
+  $("btnRec").addEventListener("click", async () => {
+    try {
+      const st = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mr = new MediaRecorder(st); const chunks = [];
+      mr.ondataavailable = (e) => chunks.push(e.data);
+      mr.onstop = () => {
+        st.getTracks().forEach(t => t.stop());
+        const blob = new Blob(chunks, { type: mr.mimeType || "audio/mp4" });
+        log(`録音: ${Math.round(blob.size / 1024)}KB, 形式 ${blob.type}`);
+        setCheck("recrun", "録音の実行", blob.size > 0, Math.round(blob.size / 1024) + "KB");
+        new Audio(URL.createObjectURL(blob)).play().catch(e => log("再生エラー: " + e.message));
+        setState("idle", "待っています");
+      };
+      setState("listen", "録音中（3秒）…"); mr.start(); setTimeout(() => mr.stop(), 3000);
+    } catch (e) { log("録音エラー: " + e.message); setCheck("recrun", "録音の実行", false, e.name); }
+  });
+
+  // ---- 窓モード ----
+  let wakeLock = null, taps = [];
+  $("btnWindow").addEventListener("click", async () => {
+    $("windowMode").hidden = false;
+    try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) { log("画面を消さない設定: " + e.message); }
+  });
+  $("windowMode").addEventListener("click", () => {
+    const now = Date.now(); taps = taps.filter(t => now - t < 600); taps.push(now);
+    if (taps.length >= 3) { $("windowMode").hidden = true; taps = []; if (wakeLock) wakeLock.release().catch(() => {}); return; }
+    setTimeout(() => { if (taps.length === 1) listen(); }, 620);
+  });
+
+  // ---- 結果のコピー ----
+  $("btnCopy").addEventListener("click", async () => {
+    const text = Object.values(checks).map(c => `${c.label}: ${c.ok === null ? "…" : c.ok ? "OK" : "NG"} ${c.note}`).join("\n") + "\n---\n" + logLines.join("\n");
+    try { await navigator.clipboard.writeText(text); $("btnCopy").textContent = "コピーしました"; }
+    catch { $("log").value = text; $("log").select(); }
+  });
+})();
+</script>
+</body>
+</html>
